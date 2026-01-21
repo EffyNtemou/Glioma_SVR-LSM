@@ -1,0 +1,54 @@
+import nibabel as nib
+import numpy as np
+
+# Settings
+
+MAP_1 = "map1_binary.nii.gz"      # e.g. word production binary map
+MAP_2 = "map2_binary.nii.gz"      # e.g. sentence production binary map
+ATLAS_FILE = "brainnetome_atlas.nii.gz" # or atlas of choice in MNI152 space
+
+OVERLAP_OUTPUT = "overlap_map.nii"
+
+# Load binary maps
+
+img1 = nib.load(MAP_1)
+data1 = img1.get_fdata()
+
+img2 = nib.load(MAP_2)
+data2 = img2.get_fdata()
+
+# Ensure both images are compatible
+assert data1.shape == data2.shape, "Input maps must have the same shape"
+
+# Compute voxelwise overlap
+
+overlap_data = np.zeros_like(data1)
+overlap_data[(data1 == 1) & (data2 == 1)] = 1
+
+# Save overlap map
+overlap_img = nib.Nifti1Image(overlap_data, img1.affine, img1.header)
+nib.save(overlap_img, OVERLAP_OUTPUT)
+
+# Load Brainnetome atlas and overlap mask
+
+atlas_img = nib.load(ATLAS_FILE)
+atlas_data = atlas_img.get_fdata()
+
+mask_data = overlap_data
+mask_data = (mask_data > 0).astype(int)  # ensure binary
+
+# Count overlapping voxels per atlas region
+
+region_labels = np.unique(atlas_data)
+region_labels = region_labels[region_labels > 0]  # exclude background
+
+voxel_counts = {}
+
+for region in region_labels:
+    count = np.sum((atlas_data == region) & (mask_data == 1))
+    voxel_counts[int(region)] = count
+
+# Print results
+
+for region, count in voxel_counts.items():
+    print(f"Region {region}: {count} voxels")
