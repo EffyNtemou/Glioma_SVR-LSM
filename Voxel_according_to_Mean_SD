@@ -1,0 +1,69 @@
+import os
+import nibabel as nib
+import numpy as np
+
+# Settings
+
+LESION_DIR = "/path/to/lesion_masks"
+PATIENT_RANGE = range(1, 115)
+FILENAME_TEMPLATE = "P{pid}_lesion_MNI.nii"
+MIN_OVERLAP = 2 # include voxels lesioned in at least 2 patients
+
+OUT_MEAN = "lesion_totalvol_mean_given_voxel.nii"
+OUT_STD = "lesion_totalvol_std_given_voxel.nii"
+
+# Load lesion masks
+
+patient_lesion_paths = [
+    os.path.join(LESION_DIR, FILENAME_TEMPLATE.format(pid=str(i).zfill(2)))
+    for i in PATIENT_RANGE
+]
+
+patient_lesion_data = []
+ref_img = None
+
+for path in patient_lesion_paths:
+    if os.path.exists(path):
+        img = nib.load(path)
+        if ref_img is None:
+            ref_img = img
+        patient_lesion_data.append(img.get_fdata())
+    else:
+        print(f"File not found: {path}")
+
+all_lesions_data = np.stack(patient_lesion_data, axis=-1)
+
+# Voxels to include (lesioned in >= 2 patients)
+
+lesion_overlap_count = np.sum(all_lesions_data > 0, axis=-1)
+valid_voxel_mask = lesion_overlap_count >= MIN_OVERLAP
+
+# Accumulate patient total lesion volumes per voxel
+
+lesion_size_sum = np.zeros(all_lesions_data.shape[:3])
+lesion_size_sq_sum = np.zeros(all_lesions_data.shape[:3])
+lesion_count = np.zeros(all_lesions_data.shape[:3])
+
+for i in range(all_lesions_data.shape[-1]):
+    patient_lesion = all_lesions_data[..., i]
+    lesion_size = np.sum(patient_lesion)  # total lesion volume for this patient
+
+    present = (patient_lesion > 0) & valid_voxel_mask
+    lesion_size_sum[present] += lesion_size
+    lesion_size_sq_sum[present] += lesion_size ** 2
+    lesion_count[present] += 1
+
+# Compute voxelwise mean and std
+
+lesion_size_mean = np.zeros(all_lesions_data.shape[:3])
+lesion_size_std = np.zeros(all_lesions_data.shape[:3])
+
+mask = lesion_count > 0
+lesion_size_mean[mask] = lesion_size_sum[mask] / lesion_count[mask]
+var = (lesion_size_sq_sum[mask] / lesion_count[mask]) - (lesion_size_mean[mask] ** 2)
+lesion_size_std[mask] = np.sqrt(var)
+
+# Save outputs
+
+nib.save(nib.Nifti1Image(lesion_size_mean, ref_img.affine), OUT_MEAN)
+nib.save(nib.Nifti1Image(lesion_size_std, ref_img.affine), OUT_STD)
